@@ -31,5 +31,5 @@ remove player with /remove_player with the BMID<br>
 
 see everyone that is currently being tracked with /status<br>
 
-/status again to remove the channels and category related to the bot.
+/setup again to remove the channels and category related to the bot.
 

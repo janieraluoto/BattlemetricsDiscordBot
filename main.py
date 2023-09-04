@@ -59,7 +59,10 @@ async def setup(ctx: discord.ApplicationContext):
                     chans = t["channels"]
                     a = ctx.guild.get_channel(chans[0])
                     for chan in chans:
-                        await ctx.guild.get_channel(chan).delete()
+                        try:
+                            await ctx.guild.get_channel(chan).delete()
+                        except Exception as error:
+                            print("Unable to delete a channel due to: ", error)
                     await a.category.delete()
                     db_config.delete_one(t)
                     await interaction.response.send_message("Category, channels and entry in DB deleted!", ephemeral=True)
@@ -70,13 +73,7 @@ async def setup(ctx: discord.ApplicationContext):
         # now we need to CREATE the channels where the BOT is going to be used.
         # CREATE the CATEGORY that the CHANNELS GO INTO
         category = await ctx.guild.create_category(name="PlayerTracker")
-        # NOW WE NEED TO CREATE THE CHANNELS.
-        # UHH WHAT CHANNELS DO WE NEED
-        # 1. CONSTANTLY UPDATING LIST OF PEOPLE THAT ARE BEING TRACKED
-        # 2. CHANNEL TO RUN COMMANDS IN? normal ones
 
-        # channel rules
-        # SHOULD SHOW WHAT ROLES CAN BE SELECTED HERE
         overwrites = {
             ctx.guild.default_role: discord.PermissionOverwrite(send_messages=False),
             ctx.guild.me: discord.PermissionOverwrite(send_messages=True),
@@ -91,33 +88,91 @@ async def setup(ctx: discord.ApplicationContext):
 
 
 @bot.slash_command()
-async def tracked_server(ctx: discord.ApplicationContext, server_to_be_tracked: int):
-    # need to check if a server has already been selected
-    doc = db_config.find_one({"_id": "server"})
-    if doc["server"] != None:
-        # A SERVER HAS ALREADY BEEN CHOSEN !!!!!!
-        # just say fuck it and delete previous one.
-        # check if server actually exists though on BM
-        api_data = requests.get
-        pass
-    else:
-        pass
-        # A SERVER HAS NOT BEEN CHOSEN YET!!!!!!!!
+async def tracked_server(ctx: discord.ApplicationContext, bmid: int):
+    # lets first see what kinda data we can get based on BMID
+    data = requests.get(
+        url=f"https://api.battlemetrics.com/players/{bmid}/relationships/sessions")
+    if data.status_code != 200:
+        await ctx.respond(f"Received an error code from Battlemetrics, Error code: { data.status_code}", ephemeral=True)
+    parsed_data = json.loads(data.content)
+
+    for entry in parsed_data['data']:
+        # print(entry)
+        server_id = entry["relationships"]["server"]["data"]["id"]
+        if entry["attributes"]["stop"] is not None:
+            # means they ARE NOT playing
+            continue
+
+       # alright, now we have server id and the server they're currently on. why did we even want this?.
+    # print(parsed_data)
 
 
 @bot.slash_command()
-async def add_player(ctx: discord.ApplicationContext):
-    pass
+async def add_player(ctx: discord.ApplicationContext, bmid: int):
+    # check if BMID is valid.
+    data = requests.get(f"https://api.battlemetrics.com/players/{bmid}")
+    if data.status_code != 200:
+        await ctx.respond(f"Received an error code from Battlemetrics, Error code: {data.status_code}", ephemeral=True)
+        print(json.loads(data.content))  # debug ig
+    parsed_data = json.loads(data.content)
+    name = parsed_data["data"]["attributes"]["name"]
+    test = {
+        "_id": bmid,
+        "name": name,
+    }
+    # check if bmid is already in the DB.
+
+    if db_players.find_one({"_id": bmid}) is not None:
+        await ctx.respond(f"A player has already been entered into the database with that BMID.", ephemeral=True)
+    db_players.insert_one(test)
+    await ctx.respond(f"Player with name {parsed_data['data']['attributes']['name']} and ID {bmid} has been entered into the database.", ephemeral=True)
 
 
 @bot.slash_command()
-async def remove_player(ctx: discord.ApplicationContext):
-    pass
+async def remove_player(ctx: discord.ApplicationContext, bmid: int):
+    print(db_players.find_one({"_id": bmid}))
+    if db_players.find_one({"_id": bmid}) is None:
+        await ctx.respond("No player with that BMID has been found in the database.", ephemeral=True)
+    db_players.delete_one({"_id": bmid})
+    await ctx.respond(f"Entry with BMID {bmid} has been removed from the database", ephemeral=True)
 
 
 @bot.slash_command()
 async def status(ctx: discord.ApplicationContext):
-    pass
+    # get every player in the database and show them in a nice EMBED format.
+
+    if db_players.count_documents({}) == 0:
+        await ctx.respond("No players are currently being tracked", ephemeral=True)
+    embed = discord.Embed(
+        title="Users currently being tracked.", colour=0x328fc)
+
+    for player in db_players.find({}):
+
+        # check if player is online and what server.
+        data = requests.get(
+            url=f"https://api.battlemetrics.com/players/{player['_id']}/relationships/sessions")
+        if data.status_code != 200:
+            value = f"Unable to check player server history due to {data.status_code}."
+            embed.add_field(name=player["name"], value=value, inline=True)
+
+        else:
+            parsed_data = json.loads(data.content)
+            for entry in parsed_data['data']:
+                # print(entry)
+                server_id = entry["relationships"]["server"]["data"]["id"]
+                if entry["attributes"]["stop"] is None:
+                    # gets here IF stop is None
+                    # get server name from server_id
+                    server_data = requests.get(
+                        f"https://api.battlemetrics.com/servers/{server_id}")
+                    server_name = json.loads(server_data.content)[
+                        "data"]["attributes"]["name"]
+                    value = f"Online: ***True*** \n Server name: {server_name} \n [BM link](https://www.battlemetrics.com/players/{player['_id']})"
+                    embed.add_field(
+                        name=player["name"], value=value, inline=True)
+                    break
+            print("weirds")
+    await ctx.respond(embed=embed, ephemeral=True)
 
 
 @bot.event

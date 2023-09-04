@@ -17,6 +17,8 @@ Discord account required as well as mongodb.<br>
 
 To use:<br>
 
+have a cluster made with mongodb and a database with the name PlayerTracker<br>
+
 create a discord server and add the bot with bot and applications.commands intents. <br>
 
 add the bot to the server you created with admin priviliges<br>

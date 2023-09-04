@@ -11,9 +11,6 @@ from dateutil import parser
 
 load_dotenv()
 
-config_data = open("config.json")
-config = json.load(config_data)
-
 intents = discord.Intents.all()
 bot = commands.Bot(
     command_prefix=os.getenv("BOT_PREFIX"), intents=intents)
@@ -108,7 +105,6 @@ async def add_player(ctx: discord.ApplicationContext, bmid: int):
 
 @bot.slash_command()
 async def remove_player(ctx: discord.ApplicationContext, bmid: int):
-    print(db_players.find_one({"_id": bmid}))
     if db_players.find_one({"_id": bmid}) is None:
         await ctx.respond("No player with that BMID has been found in the database.", ephemeral=True)
     db_players.delete_one({"_id": bmid})
@@ -141,7 +137,6 @@ async def status(ctx: discord.ApplicationContext):
 async def tracker_loop():
     channel = bot.get_channel(db_config.find_one(
         {"_id": "category"})['channels'][0])
-    print("running")
     if db_players.count_documents({}) == 0:
         return
     for player in db_players.find({}):
@@ -175,5 +170,5 @@ async def tracker_loop():
 @bot.event
 async def on_ready():
     tracker_loop.start()
-
+    print("BattleMetricsTracker started!")
 bot.run(os.getenv("DISCORD_TOKEN"))

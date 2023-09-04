@@ -1,5 +1,13 @@
 # BattlemetricsDiscordBot
 
+bot allows the user to create a database to add rust players to and track when they join a specific rust server whose battlemetrics id you supply.<br>
+
+commands:<br>
+/add_player<br>
+/remove_player<br>
+/status<br>
+/setup<br>
+<br>
 Required packages:
 
 pycord <br>

@@ -13,9 +13,11 @@ import requests
 import json
 import os
 
+
 from discord.ui import View, Button, Select
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
+from dateutil import parser
 
 load_dotenv()
 
@@ -37,7 +39,7 @@ db_players = db.players
 
 
 @bot.slash_command()
-async def setup(ctx: discord.ApplicationContext):
+async def setup(ctx: discord.ApplicationContext, server_id: int = None):
     if db_config.count_documents({}) != 0:
         class test(discord.ui.View):
             @discord.ui.select(
@@ -83,7 +85,7 @@ async def setup(ctx: discord.ApplicationContext):
         commands = await category.create_text_channel(name="Commands", overwrites=overwrites)
         # need to add cats ids and channel ids to db
         db_config.insert_one(
-            {"_id": "category", "category": category.id, "channels": [tracking.id, commands.id]})
+            {"_id": "category", "category": category.id, "server_id": server_id, "channels": [tracking.id, commands.id]})
         await ctx.respond("Created required channels for PlayerTracker.", ephemeral=True)
 
 
@@ -116,16 +118,28 @@ async def add_player(ctx: discord.ApplicationContext, bmid: int):
         print(json.loads(data.content))  # debug ig
     parsed_data = json.loads(data.content)
     name = parsed_data["data"]["attributes"]["name"]
-    test = {
-        "_id": bmid,
-        "name": name,
-    }
     # check if bmid is already in the DB.
 
     if db_players.find_one({"_id": bmid}) is not None:
         await ctx.respond(f"A player has already been entered into the database with that BMID.", ephemeral=True)
+
+    # check if player is online on the server whose id is supplied during setup
+    seen_data = requests.get(
+        f"https://api.battlemetrics.com/players/{bmid}/servers/{db_config.find_one({'_id': 'category'})['server_id']}")
+    other_parsed_data = json.loads(seen_data.content)
+    if seen_data.status_code != 200:
+        await ctx.respond(f"Unable to add player to database due to {seen_data.status_code}. Full error code: {other_parsed_data['errors']}", ephemeral=True)
+    status = other_parsed_data["data"]["attributes"]["online"]
+
+    test = {
+        "_id": bmid,
+        "name": name,
+        "status": status,
+        "last_seen": other_parsed_data["data"]["attributes"]["lastSeen"]
+    }
+
     db_players.insert_one(test)
-    await ctx.respond(f"Player with name {parsed_data['data']['attributes']['name']} and ID {bmid} has been entered into the database.", ephemeral=True)
+    await ctx.respond(f"Player with name {name} and ID {bmid} has been entered into the database.", ephemeral=True)
 
 
 @bot.slash_command()
@@ -147,36 +161,60 @@ async def status(ctx: discord.ApplicationContext):
         title="Users currently being tracked.", colour=0x328fc)
 
     for player in db_players.find({}):
+        bmid = player["_id"]
+        name = player["name"]
+        status = player["status"]
+        last_seen = player["last_seen"]
+        epoch = round(parser.parse(last_seen).timestamp())
+        discord_time = f"<t:{epoch}:R>"
+        embed.add_field(
+            name=name,
+            value=f"Online: ***{status}*** \n Online since: ***{discord_time}***\n [BM link](https://www.battlemetrics.com/players/{bmid})", inline=False)
 
-        # check if player is online and what server.
-        data = requests.get(
-            url=f"https://api.battlemetrics.com/players/{player['_id']}/relationships/sessions")
-        if data.status_code != 200:
-            value = f"Unable to check player server history due to {data.status_code}."
-            embed.add_field(name=player["name"], value=value, inline=True)
-
-        else:
-            parsed_data = json.loads(data.content)
-            for entry in parsed_data['data']:
-                # print(entry)
-                server_id = entry["relationships"]["server"]["data"]["id"]
-                if entry["attributes"]["stop"] is None:
-                    # gets here IF stop is None
-                    # get server name from server_id
-                    server_data = requests.get(
-                        f"https://api.battlemetrics.com/servers/{server_id}")
-                    server_name = json.loads(server_data.content)[
-                        "data"]["attributes"]["name"]
-                    value = f"Online: ***True*** \n Server name: {server_name} \n [BM link](https://www.battlemetrics.com/players/{player['_id']})"
-                    embed.add_field(
-                        name=player["name"], value=value, inline=True)
-                    break
-            print("weirds")
     await ctx.respond(embed=embed, ephemeral=True)
+# now we need to create the static loop that checks for changes in player status
+# that then updates the database and sends a message in channel.
+
+
+@tasks.loop(seconds=5)
+async def tracker_loop():
+    channel = bot.get_channel(db_config.find_one(
+        {"_id": "category"})['channels'][0])
+    print("running")
+    if db_players.count_documents({}) == 0:
+        return
+    for player in db_players.find({}):
+        bmid = player["_id"]
+        name = player["name"]
+        status = player["status"]
+        last_seen = player["last_seen"]
+
+        # check if players status is different from the one that is logged in DB.
+        data = requests.get(
+            f"https://api.battlemetrics.com/players/{bmid}/servers/{db_config.find_one({'_id':'category'})['server_id']}")
+        parsed_data = json.loads(data.content)
+
+        new_status = parsed_data["data"]["attributes"]["online"]
+        if new_status != status:
+            # update db now
+            seen = parsed_data["data"]["attributes"]["lastSeen"]
+            name_data = requests.get(
+                f"https://api.battlemetrics.com/players/{bmid}")
+            name_parsed_data = json.loads(name_data.content)
+            new_name = name_parsed_data["data"]["attributes"]["name"]
+            newvals = {"_id": bmid, "name": new_name, "status": new_status,
+                       "last_seen": seen}
+            db_players.delete_one(player)
+            db_players.insert_one(newvals)
+
+            t = f"{new_name} has logged on to the server." if new_status else f"{new_name} has logged off."
+            embed = discord.Embed(
+                title=t, colour=0x73fc03)
+            await channel.send(embed=embed)
 
 
 @bot.event
 async def on_ready():
-    pass
+    tracker_loop.start()
 
 bot.run(os.getenv("DISCORD_TOKEN"))

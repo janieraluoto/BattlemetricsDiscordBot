@@ -4,13 +4,13 @@ Required packages:
 
 pycord
 pymongo
-
+\n
 
 .env contains the following:
 DISCORD_TOKEN
 MONGO_LOGIN
 BOT_PREFIX
-
+\n
 mongo database formats are:
 PlayerTracker ->
   config ->

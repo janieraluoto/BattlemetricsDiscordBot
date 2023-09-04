@@ -1,12 +1,3 @@
-# STAY COMMITED TO THIS YOU PIECE OF SHIT
-# ALRIGHT BOT TO DO THE FOLLOWING THINGS:
-# 1. HAVE A MONGODB WITH EVERY PLAYER THAT'S BEING TRACKER
-# 1. A METHOD TO ADD PEOPLE TO BEING TRACKED
-# 1. A METHOD TO REMOVE PEOPLE FROM BEING TRACKED
-# 1. A METHOD TO CHECK CURRENT LIST OF PEOPLE BEING TRACKED
-# LETS START WITH THOSE.
-
-# IMPORTS
 import discord
 import pymongo
 import requests
@@ -14,20 +5,18 @@ import json
 import os
 
 
-from discord.ui import View, Button, Select
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from dateutil import parser
 
 load_dotenv()
 
-# CONFIG SHIT
 config_data = open("config.json")
 config = json.load(config_data)
 
 intents = discord.Intents.all()
 bot = commands.Bot(
-    command_prefix=config["bot_prefix"], intents=intents)
+    command_prefix=os.getenv("BOT_PREFIX"), intents=intents)
 
 
 client = pymongo.MongoClient(
@@ -72,8 +61,6 @@ async def setup(ctx: discord.ApplicationContext, server_id: int = None):
                     await interaction.response.send_message("Procedure cancelled.", ephemeral=True)
         await ctx.respond("Category & channels already exist, delete current ones?", view=test(), ephemeral=True)
     else:
-        # now we need to CREATE the channels where the BOT is going to be used.
-        # CREATE the CATEGORY that the CHANNELS GO INTO
         category = await ctx.guild.create_category(name="PlayerTracker")
 
         overwrites = {
@@ -90,40 +77,17 @@ async def setup(ctx: discord.ApplicationContext, server_id: int = None):
 
 
 @bot.slash_command()
-async def tracked_server(ctx: discord.ApplicationContext, bmid: int):
-    # lets first see what kinda data we can get based on BMID
-    data = requests.get(
-        url=f"https://api.battlemetrics.com/players/{bmid}/relationships/sessions")
-    if data.status_code != 200:
-        await ctx.respond(f"Received an error code from Battlemetrics, Error code: { data.status_code}", ephemeral=True)
-    parsed_data = json.loads(data.content)
-
-    for entry in parsed_data['data']:
-        # print(entry)
-        server_id = entry["relationships"]["server"]["data"]["id"]
-        if entry["attributes"]["stop"] is not None:
-            # means they ARE NOT playing
-            continue
-
-       # alright, now we have server id and the server they're currently on. why did we even want this?.
-    # print(parsed_data)
-
-
-@bot.slash_command()
 async def add_player(ctx: discord.ApplicationContext, bmid: int):
-    # check if BMID is valid.
     data = requests.get(f"https://api.battlemetrics.com/players/{bmid}")
     if data.status_code != 200:
         await ctx.respond(f"Received an error code from Battlemetrics, Error code: {data.status_code}", ephemeral=True)
         print(json.loads(data.content))  # debug ig
     parsed_data = json.loads(data.content)
     name = parsed_data["data"]["attributes"]["name"]
-    # check if bmid is already in the DB.
 
     if db_players.find_one({"_id": bmid}) is not None:
         await ctx.respond(f"A player has already been entered into the database with that BMID.", ephemeral=True)
 
-    # check if player is online on the server whose id is supplied during setup
     seen_data = requests.get(
         f"https://api.battlemetrics.com/players/{bmid}/servers/{db_config.find_one({'_id': 'category'})['server_id']}")
     other_parsed_data = json.loads(seen_data.content)
@@ -153,7 +117,6 @@ async def remove_player(ctx: discord.ApplicationContext, bmid: int):
 
 @bot.slash_command()
 async def status(ctx: discord.ApplicationContext):
-    # get every player in the database and show them in a nice EMBED format.
 
     if db_players.count_documents({}) == 0:
         await ctx.respond("No players are currently being tracked", ephemeral=True)
@@ -172,11 +135,9 @@ async def status(ctx: discord.ApplicationContext):
             value=f"Online: ***{status}*** \n Online since: ***{discord_time}***\n [BM link](https://www.battlemetrics.com/players/{bmid})", inline=False)
 
     await ctx.respond(embed=embed, ephemeral=True)
-# now we need to create the static loop that checks for changes in player status
-# that then updates the database and sends a message in channel.
 
 
-@tasks.loop(seconds=5)
+@tasks.loop(seconds=60)
 async def tracker_loop():
     channel = bot.get_channel(db_config.find_one(
         {"_id": "category"})['channels'][0])
@@ -189,14 +150,12 @@ async def tracker_loop():
         status = player["status"]
         last_seen = player["last_seen"]
 
-        # check if players status is different from the one that is logged in DB.
         data = requests.get(
             f"https://api.battlemetrics.com/players/{bmid}/servers/{db_config.find_one({'_id':'category'})['server_id']}")
         parsed_data = json.loads(data.content)
 
         new_status = parsed_data["data"]["attributes"]["online"]
         if new_status != status:
-            # update db now
             seen = parsed_data["data"]["attributes"]["lastSeen"]
             name_data = requests.get(
                 f"https://api.battlemetrics.com/players/{bmid}")
